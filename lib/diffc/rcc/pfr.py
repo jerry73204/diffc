@@ -1,8 +1,9 @@
 import cupy as cp
 import numpy as np
+import os
 
-# Load the CUDA module
-cuda_code = open("lib/diffc/rcc/cuda_kernels.cu", "r").read()
+# Load the CUDA module (path relative to this file, importable from any cwd)
+cuda_code = open(os.path.join(os.path.dirname(__file__), "cuda_kernels.cu"), "r").read()
 cuda_module = cp.RawModule(code=cuda_code)
 
 # Get the kernel functions
