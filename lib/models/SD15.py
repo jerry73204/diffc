@@ -5,7 +5,7 @@ import torch
 class SD15Model(SDModel):
     def __init__(self, device="cuda", dtype=torch.float16):
         super().__init__(
-            model_id="runwayml/stable-diffusion-v1-5", device=device, dtype=dtype
+            model_id="stable-diffusion-v1-5/stable-diffusion-v1-5", device=device, dtype=dtype
         )
 
     def _get_noise_pred(self, latent_model_input, timestep, encoder_hidden_states):
