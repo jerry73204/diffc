@@ -18,3 +18,6 @@ __pycache__/
 # Results and tests
 results/
 test_run.sh
+# codec-study scratch inputs
+data/nuscenes_views/
+data/smoke/
