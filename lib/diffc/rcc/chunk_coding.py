@@ -1,5 +1,6 @@
 import numpy as np
-from lib.diffc.rcc.pfr import reverse_channel_encode, reverse_channel_decode
+from lib.diffc.rcc.pfr import (reverse_channel_encode, reverse_channel_decode,
+                               reverse_channel_encode_batch)
 
 
 def partition_mu(dim, chunk_sizes, shared_seed=0):
@@ -41,19 +42,25 @@ def combine_partitions(partition_indices, partitions):
 
 
 def chunk_and_encode(mu, chunk_sizes, shared_seed=0):
+    """Batched: chunks grouped by K, one 4-launch PFR round per group
+    (winning seeds decode identically to the single-chunk path; the race
+    exponentials use the batched kernel's seeded stream)."""
     partition_indices = partition_mu(len(mu), chunk_sizes, shared_seed)
 
-    partitions = []
-    seeds = []
+    groups = {}                                  # K -> list of chunk index i
     for i, chunk_size in enumerate(chunk_sizes):
-        chunk_mask = partition_indices == i
-        mu_chunk = mu[chunk_mask]
-        chunk_shared_seed = hash((shared_seed, i)) % (2 ** 32)
-        seed, partition = reverse_channel_encode(
-            mu_chunk, K=int(2 ** chunk_size), shared_seed=chunk_shared_seed
-        )
-        seeds.append(seed)
-        partitions.append(partition)
+        groups.setdefault(int(2 ** chunk_size), []).append(i)
+
+    seeds = [None] * len(chunk_sizes)
+    partitions = [None] * len(chunk_sizes)
+    for K, idxs in groups.items():
+        mu_chunks = [mu[partition_indices == i].astype(np.float32)
+                     for i in idxs]
+        chunk_seeds = [hash((shared_seed, i)) % (2 ** 32) for i in idxs]
+        win, samples = reverse_channel_encode_batch(mu_chunks, K, chunk_seeds)
+        for i, w, s in zip(idxs, win, samples):
+            seeds[i] = w
+            partitions[i] = s
 
     return tuple(seeds), combine_partitions(partition_indices, partitions)
 

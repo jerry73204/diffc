@@ -11,6 +11,56 @@ reverse_channel_encode_kernel = cuda_module.get_function(
     "reverse_channel_encode_kernel"
 )
 generate_sample_kernel = cuda_module.get_function("generate_sample_kernel")
+reverse_channel_encode_batch_kernel = cuda_module.get_function(
+    "reverse_channel_encode_batch_kernel"
+)
+race_exponentials_batch_kernel = cuda_module.get_function(
+    "race_exponentials_batch_kernel"
+)
+generate_sample_batch_kernel = cuda_module.get_function(
+    "generate_sample_batch_kernel"
+)
+
+
+def reverse_channel_encode_batch(mu_chunks, K, seeds):
+    """Batched PFR for M same-K chunks: 4 kernel launches + 1 sync total
+    (vs 2 launches + a sync PER chunk on the single path). The candidate
+    stream matches the single-chunk kernel exactly (same curand layout), so
+    winning seeds decode identically; the race exponentials use an in-kernel
+    seeded stream (deterministic; equally valid PFR draw).
+    Returns (win_seeds list[int], samples list[np.float16 array])."""
+    M = len(mu_chunks)
+    dims = np.array([len(c) for c in mu_chunks], dtype=np.int32)
+    offsets = np.zeros(M, dtype=np.int64)
+    offsets[1:] = np.cumsum(dims[:-1])
+    total = int(dims.sum())
+    mu_flat = cp.empty(total, dtype=cp.float32)
+    for m, c in enumerate(mu_chunks):
+        mu_flat[int(offsets[m]):int(offsets[m]) + int(dims[m])] = cp.asarray(
+            c, dtype=cp.float32)
+    d_off = cp.asarray(offsets)
+    d_dims = cp.asarray(dims)
+    d_seeds = cp.asarray(np.array(seeds, dtype=np.uint64))
+    log_w = cp.empty((M, K), dtype=cp.float32)
+    t_mat = cp.empty((M, K), dtype=cp.float32)
+    block = 256
+    grid = ((K + block - 1) // block, M, 1)
+    reverse_channel_encode_batch_kernel(
+        grid, (block, 1, 1),
+        (mu_flat, d_off, d_dims, d_seeds, cp.int32(M), cp.uint64(K), log_w))
+    race_exponentials_batch_kernel(
+        grid, (block, 1, 1), (d_seeds, cp.int32(M), cp.uint64(K), t_mat))
+    s = cp.log(cp.cumsum(t_mat, axis=1)) - log_w
+    win = cp.argmin(s, axis=1).astype(cp.int64)
+    sample_flat = cp.empty(total, dtype=cp.float32)
+    generate_sample_batch_kernel(
+        (M, 1, 1), (1, 1, 1),
+        (d_off, d_dims, d_seeds, win, cp.int32(M), sample_flat))
+    win_h = cp.asnumpy(win)
+    sample_h = cp.asnumpy(sample_flat).astype(np.float16)
+    return ([int(w) for w in win_h],
+            [sample_h[int(offsets[m]):int(offsets[m]) + int(dims[m])]
+             for m in range(M)])
 
 
 def generate_sample(dim, shared_seed, sample_seed):
