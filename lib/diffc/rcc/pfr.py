@@ -37,8 +37,15 @@ def _reverse_channel_encode(mu_q_in, K, shared_seed=0):
     block_size = 256
     grid_size = (K + block_size - 1) // block_size
 
-    # Generate vector of random exponentials
-    t = cp.random.exponential(scale=1.0, size=K)
+    # Generate vector of random exponentials.
+    # Seeded from shared_seed (offset to decorrelate from the candidate
+    # stream): the upstream code drew from cupy's GLOBAL rng, making the
+    # winning index — and thus the encoded bitstream — nondeterministic
+    # across encode runs (decode replay was always deterministic; PFR is
+    # correct for ANY draw). Seeding makes re-encode byte-reproducible.
+    # (standard_exponential: scale=1 as upstream; Generator.exponential has
+    # no prebuilt kernel for sm_120)
+    t = cp.random.default_rng(int(shared_seed) ^ 0x9E3779B9).standard_exponential(K)
     # take the log of the cumsum of those
     log_cumsum_t = cp.log(cp.cumsum(t))
 
